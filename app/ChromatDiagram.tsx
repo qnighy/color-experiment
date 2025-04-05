@@ -4,7 +4,7 @@ import { ReactElement, useEffect, useRef } from "react";
 import { cmf } from "./cmf";
 import { useElementSize } from "./useElementSize";
 import { usePixelDensity } from "./usePixelDensity";
-import { ChromatUV, ColorXYZ, uvFromXYZ, xyzFromUV } from "./color-transform";
+import { ChromatUV, ColorLSRGB, ColorXYZ, uvFromXYZ, xyzFromLsrgb, xyzFromUV } from "./color-transform";
 
 export function ChromatDiagram(): ReactElement | null {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -23,7 +23,7 @@ export function ChromatDiagram(): ReactElement | null {
         throw new TypeError("Failed: getContext(\"2d\")");
       }
       ctx.clearRect(0, 0, width, height);
-      doRender(width, height, ctx);
+      doRender(width, height, density, ctx);
     }
   }, [elemSize.width, elemSize.height, density, doRender]);
   return (
@@ -34,15 +34,22 @@ export function ChromatDiagram(): ReactElement | null {
 type Coord = (xyz: ColorXYZ) => [number, number];
 
 const uvMultiply = 1.5
-function render(width: number, height: number, ctx: CanvasRenderingContext2D) {
+const whiteXyz = xyzFromLsrgb(ColorLSRGB(1, 1, 1));
+const whiteUv = uvFromXYZ(whiteXyz);
+function render(width: number, height: number, density: number, ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "#f8f8f8";
   ctx.fillRect(0, 0, width, height);
   if (width > 0 && height > 0) {
-    const img = ctx.createImageData(width, height, { colorSpace: "srgb" });
+    const off = new OffscreenCanvas(width, height);
+    const offCtx = off.getContext("2d");
+    if (!offCtx) {
+      throw new TypeError("Failed: getContext(\"2d\")");
+    }
+    const img = offCtx.createImageData(width, height, { colorSpace: "srgb" });
     for (let canvasY = 0; canvasY < height; canvasY += 1) {
       for (let canvasX = 0; canvasX < width; canvasX += 1) {
-        const xyz = xyzFromUV(uvFromCanvasCoord([canvasX, canvasY]), 1);
-        const [lr, lg, lb] = lsrgbFromXyz(xyz);
+        const uv = uvFromCanvasCoord([canvasX, canvasY]);
+        const [lr, lg, lb] = lsrgbFromXyz(xyzFromUV(uv, 1));
         if (lr >= 0 && lg >= 0 && lb >= 0) {
           const len = Math.hypot(lr, lg, lb);
           const srgb = srgbFromLsrgb([lr / len, lg / len, lb / len]);
@@ -51,10 +58,38 @@ function render(width: number, height: number, ctx: CanvasRenderingContext2D) {
           img.data[pos + 1] = srgb[1] * 255;
           img.data[pos + 2] = srgb[2] * 255;
           img.data[pos + 3] = 255;
+        } else {
+          const unitX = canvasX / density / 16;
+          const unitY = canvasY / density / 16;
+          const r0 = Math.hypot(unitX % 1 - 0.5, unitY % 1 - 0.5);
+          const r1 = Math.hypot((unitX + 0.5) % 1 - 0.5, (unitY + 0.5) % 1 - 0.5);
+          const r = Math.min(r0, r1);
+
+          // Render color with reduced chroma for comparison
+          const adjustedUv = ChromatUV(
+            whiteUv[0] + (uv[0] - whiteUv[0]) * 0.3,
+            whiteUv[1] + (uv[1] - whiteUv[1]) * 0.3
+          );
+          const [lr2, lg2, lb2] = lsrgbFromXyz(xyzFromUV(adjustedUv, 1));
+          if (lr2 >= 0 && lg2 >= 0 && lb2 >= 0 && r < 0.25) {
+            const len2 = Math.hypot(lr2, lg2, lb2);
+            const srgb2 = srgbFromLsrgb([lr2 / len2, lg2 / len2, lb2 / len2]);
+            const pos = (canvasX + width * canvasY) * 4;
+            img.data[pos + 0] = srgb2[0] * 255;
+            img.data[pos + 1] = srgb2[1] * 255;
+            img.data[pos + 2] = srgb2[2] * 255;
+            img.data[pos + 3] = 255;
+          }
         }
       }
     }
-    ctx.putImageData(img, 0, 0);
+    offCtx.putImageData(img, 0, 0);
+
+    const arc = monochromaticArc((xyz) => canvasCoordFromUv(uvFromXYZ(xyz)));
+    ctx.save();
+    ctx.clip(new Path2D(arc), "evenodd");
+    ctx.drawImage(off, 0, 0);
+    ctx.restore();
   }
 
   ctx.strokeStyle = "black";
