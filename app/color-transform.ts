@@ -1,18 +1,11 @@
 /**
- * sRGB (IEC 61966-2-1:1999), where
- * 
- * - each component has Gamma applied and in [0, 1]
- * - (1, 1, 1) is D65 white point
+ * A certain non-linear RGB color space, like sRGB
  */
-export type ColorSRGB = [number, number, number] & { __brand: "ColorSRGB" };
+export type ColorNonlinearRGB = [number, number, number] & { __brand: "ColorNonlinearRGB" };
 /**
- * like sRGB but linear, where
- * 
- * - each component in [0, 1]
- * - the vector is linearly related to the XYZ color
- * - (1, 1, 1) is D65 white point
+ * A certain RGB color space linearly correlated to XYZ
  */
-export type ColorLSRGB = [number, number, number] & { __brand: "ColorLSRGB" };
+export type ColorLinearRGB = [number, number, number] & { __brand: "ColorLinearRGB" };
 /**
  * CIE1931 XYZ
  */
@@ -22,11 +15,11 @@ export type ColorXYZ = [number, number, number] & { __brand: "ColorXYZ" };
  */
 export type ChromatUV = [number, number] & { __brand: "ChromatUV" };
 
-export function ColorSRGB(r: number, g: number, b: number): ColorSRGB {
-  return [r, g, b] as ColorSRGB;
+export function ColorNonlinearRGB(r: number, g: number, b: number): ColorNonlinearRGB {
+  return [r, g, b] as ColorNonlinearRGB;
 }
-export function ColorLSRGB(r: number, g: number, b: number): ColorLSRGB {
-  return [r, g, b] as ColorLSRGB;
+export function ColorLinearRGB(r: number, g: number, b: number): ColorLinearRGB {
+  return [r, g, b] as ColorLinearRGB;
 }
 export function ColorXYZ(x: number, y: number, z: number): ColorXYZ {
   return [x, y, z] as ColorXYZ;
@@ -47,31 +40,45 @@ export function xyzFromUV([u, v]: ChromatUV, y: number): ColorXYZ {
   return ColorXYZ(x, y, z);
 }
 
-export function lsrgbFromXyz([x, y, z]: ColorXYZ): ColorLSRGB {
-  const lr = 3.2406 * x + -1.5372 * y + -0.4986 * z;
-  const lg = -0.9689 * x + 1.8758 * y + 0.0415 * z;
-  const lb = 0.0557 * x + -0.2040 * y + 1.0570 * z;
-  return ColorLSRGB(lr, lg, lb);
+export function lsrgbFromXyz([x, y, z]: ColorXYZ): ColorLinearRGB {
+  const lr =  3.2406 * x + -1.5372 * y + -0.4986 * z;
+  const lg = -0.9689 * x +  1.8758 * y +  0.0415 * z;
+  const lb =  0.0557 * x + -0.2040 * y +  1.0570 * z;
+  return ColorLinearRGB(lr, lg, lb);
 }
-export function xyzFromLsrgb([lr, lg, lb]: ColorLSRGB): ColorXYZ {
+export function xyzFromLsrgb([lr, lg, lb]: ColorLinearRGB): ColorXYZ {
   const x = 0.4124 * lr + 0.3576 * lg + 0.1805 * lb;
   const y = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
   const z = 0.0193 * lr + 0.1192 * lg + 0.9505 * lb;
   return ColorXYZ(x, y, z);
 }
 
-export function srgbFromLsrgb([lr, lg, lb]: ColorLSRGB): ColorSRGB {
+export function srgbFromLsrgb([lr, lg, lb]: ColorLinearRGB): ColorNonlinearRGB {
   const r = applySRGBGamma(lr);
   const g = applySRGBGamma(lg);
   const b = applySRGBGamma(lb);
-  return ColorSRGB(r, g, b);
+  return ColorNonlinearRGB(r, g, b);
 }
-export function lsrgbFromSrgb([r, g, b]: ColorSRGB): ColorLSRGB {
+export function lsrgbFromSrgb([r, g, b]: ColorNonlinearRGB): ColorLinearRGB {
   const lr = removeSRGBGamma(r);
   const lg = removeSRGBGamma(g);
   const lb = removeSRGBGamma(b);
-  return ColorLSRGB(lr, lg, lb);
+  return ColorLinearRGB(lr, lg, lb);
 }
+
+export function lp3FromXyz([x, y, z]: ColorXYZ): ColorLinearRGB {
+  const lr =  2.4935 * x + -0.9314 * y + -0.4027 * z;
+  const lg = -0.8295 * x +  1.7627 * y +  0.0236 * z;
+  const lb =  0.0358 * x + -0.0762 * y +  0.9569 * z;
+  return ColorLinearRGB(lr, lg, lb);
+}
+export function xyzFromLp3([lr, lg, lb]: ColorLinearRGB): ColorXYZ {
+  const x = 0.4866 * lr + 0.2657 * lg + 0.1982 * lb;
+  const y = 0.2290 * lr + 0.6917 * lg + 0.0793 * lb;
+  const z = 0.0000 * lr + 0.0451 * lg + 1.0439 * lb;
+  return ColorXYZ(x, y, z);
+}
+export { srgbFromLsrgb as displayP3FromLp3, lsrgbFromSrgb as lp3FromDisplayP3 };
 
 function applySRGBGamma(v: number): number {
   if (v < 0.0031308) {

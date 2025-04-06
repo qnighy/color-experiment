@@ -1,12 +1,34 @@
 "use client";
 
-import { ReactElement, useEffect, useRef } from "react";
+import { ReactElement, useEffect, useRef, useState } from "react";
 import { cmf } from "./cmf";
 import { useElementSize } from "./useElementSize";
 import { usePixelDensity } from "./usePixelDensity";
-import { ChromatUV, ColorLSRGB, ColorXYZ, uvFromXYZ, xyzFromLsrgb, xyzFromUV } from "./color-transform";
+import { ChromatUV, ColorLinearRGB, ColorXYZ, lp3FromXyz, lsrgbFromXyz, srgbFromLsrgb, uvFromXYZ, xyzFromLsrgb, xyzFromUV } from "./color-transform";
 
 export function ChromatDiagram(): ReactElement | null {
+  const [renderColorSpace, setRenderColorSpace] = useState<RenderColorSpace>("srgb");
+  const handleColorSpaceChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value as RenderColorSpace;
+    setRenderColorSpace(value);
+  };
+  return (
+    <>
+      <select value={renderColorSpace} onChange={handleColorSpaceChange}>
+        <option value="srgb">sRGB</option>
+        <option value="display-p3">Display P3</option>
+      </select>
+      <ChromatDiagramCanvas renderColorSpace={renderColorSpace} />
+    </>
+  );
+}
+type RenderColorSpace = "srgb" | "display-p3";
+
+type ChromatDiagramCanvasProps = {
+  renderColorSpace: RenderColorSpace;
+};
+function ChromatDiagramCanvas(props: ChromatDiagramCanvasProps): ReactElement | null {
+  const { renderColorSpace } = props;
   const ref = useRef<HTMLCanvasElement>(null);
   const elemSize = useElementSize({ ref });
   const { density } = usePixelDensity();
@@ -18,14 +40,16 @@ export function ChromatDiagram(): ReactElement | null {
     if (ref.current) {
       ref.current.width = width;
       ref.current.height = height;
-      const ctx = ref.current.getContext("2d");
+      const ctx = ref.current.getContext("2d", {
+        colorSpace: renderColorSpace,
+      });
       if (!ctx) {
         throw new TypeError("Failed: getContext(\"2d\")");
       }
       ctx.clearRect(0, 0, width, height);
-      doRender(width, height, density, ctx);
+      doRender(width, height, density, renderColorSpace, ctx);
     }
-  }, [elemSize.width, elemSize.height, density, doRender]);
+  }, [elemSize.width, elemSize.height, density, renderColorSpace, doRender]);
   return (
     <canvas ref={ref} className="w-screen h-screen object-contain object-center" />
   );
@@ -34,9 +58,9 @@ export function ChromatDiagram(): ReactElement | null {
 type Coord = (xyz: ColorXYZ) => [number, number];
 
 const uvMultiply = 1.5
-const whiteXyz = xyzFromLsrgb(ColorLSRGB(1, 1, 1));
+const whiteXyz = xyzFromLsrgb(ColorLinearRGB(1, 1, 1));
 const whiteUv = uvFromXYZ(whiteXyz);
-function render(width: number, height: number, density: number, ctx: CanvasRenderingContext2D) {
+function render(width: number, height: number, density: number, renderColorSpace: RenderColorSpace, ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = "#f8f8f8";
   ctx.fillRect(0, 0, width, height);
   if (width > 0 && height > 0) {
@@ -45,14 +69,14 @@ function render(width: number, height: number, density: number, ctx: CanvasRende
     if (!offCtx) {
       throw new TypeError("Failed: getContext(\"2d\")");
     }
-    const img = offCtx.createImageData(width, height, { colorSpace: "srgb" });
+    const img = offCtx.createImageData(width, height, { colorSpace: renderColorSpace });
     for (let canvasY = 0; canvasY < height; canvasY += 1) {
       for (let canvasX = 0; canvasX < width; canvasX += 1) {
         const uv = uvFromCanvasCoord([canvasX, canvasY]);
-        const [lr, lg, lb] = lsrgbFromXyz(xyzFromUV(uv, 1));
+        const [lr, lg, lb] = (renderColorSpace === "display-p3" ? lp3FromXyz : lsrgbFromXyz)(xyzFromUV(uv, 1));
         if (lr >= 0 && lg >= 0 && lb >= 0) {
           const len = Math.hypot(lr, lg, lb);
-          const srgb = srgbFromLsrgb([lr / len, lg / len, lb / len]);
+          const srgb = srgbFromLsrgb(ColorLinearRGB(lr / len, lg / len, lb / len));
           const pos = (canvasX + width * canvasY) * 4;
           img.data[pos + 0] = srgb[0] * 255;
           img.data[pos + 1] = srgb[1] * 255;
@@ -66,14 +90,15 @@ function render(width: number, height: number, density: number, ctx: CanvasRende
           const r = Math.min(r0, r1);
 
           // Render color with reduced chroma for comparison
+          const adjustFactor = renderColorSpace === "display-p3" ? 0.4 : 0.3;
           const adjustedUv = ChromatUV(
-            whiteUv[0] + (uv[0] - whiteUv[0]) * 0.3,
-            whiteUv[1] + (uv[1] - whiteUv[1]) * 0.3
+            whiteUv[0] + (uv[0] - whiteUv[0]) * adjustFactor,
+            whiteUv[1] + (uv[1] - whiteUv[1]) * adjustFactor
           );
-          const [lr2, lg2, lb2] = lsrgbFromXyz(xyzFromUV(adjustedUv, 1));
+          const [lr2, lg2, lb2] = (renderColorSpace === "display-p3" ? lp3FromXyz : lsrgbFromXyz)(xyzFromUV(adjustedUv, 1));
           if (lr2 >= 0 && lg2 >= 0 && lb2 >= 0 && r < 0.25) {
             const len2 = Math.hypot(lr2, lg2, lb2);
-            const srgb2 = srgbFromLsrgb([lr2 / len2, lg2 / len2, lb2 / len2]);
+            const srgb2 = srgbFromLsrgb(ColorLinearRGB(lr2 / len2, lg2 / len2, lb2 / len2));
             const pos = (canvasX + width * canvasY) * 4;
             img.data[pos + 0] = srgb2[0] * 255;
             img.data[pos + 1] = srgb2[1] * 255;
@@ -109,28 +134,6 @@ function render(width: number, height: number, density: number, ctx: CanvasRende
     const canvasX = u * uvMultiply * width;
     const canvasY = (1 - v * uvMultiply) * height;
     return [canvasX, canvasY];
-  }
-}
-
-function lsrgbFromXyz([x, y, z]: [number, number, number]): [number, number, number] {
-  const lr = 3.2406 * x + -1.5372 * y + -0.4986 * z;
-  const lg = -0.9689 * x + 1.8758 * y + 0.0415 * z;
-  const lb = 0.0557 * x + -0.2040 * y + 1.0570 * z;
-  return [lr, lg, lb];
-}
-
-function srgbFromLsrgb([lr, lg, lb]: [number, number, number]): [number, number, number] {
-  const r = applySRGBGamma(lr);
-  const g = applySRGBGamma(lg);
-  const b = applySRGBGamma(lb);
-  return [r, g, b];
-}
-
-function applySRGBGamma(v: number): number {
-  if (v < 0.0031308) {
-    return 12.92 * v;
-  } else {
-    return 1.055 * v ** (1.0 / 2.4) - 0.055;
   }
 }
 
